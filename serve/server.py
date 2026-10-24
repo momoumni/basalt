@@ -168,10 +168,12 @@ def main() -> int:
         print(vision_line(cfg.get("vision"), cfg, vision.ready_s if vision else 0.0), flush=True)
         if lazy:
             print("[server] model unloaded, the first request loads it", flush=True)
+        from serve.util.telemetry import CONV           # local patch: the conversation cache's figures
         if cfg.get("log"):                              # follow the engine's log file
             threading.Thread(target=tail_file, args=(logs, cfg["log"], "eng"), daemon=True).start()
+            threading.Thread(target=tail_file, args=(CONV, cfg["log"], "eng"), daemon=True).start()
         else:
-            ProcessEngine.stderr_sink = lambda line: logs.add("eng", line)
+            ProcessEngine.stderr_sink = lambda line: (logs.add("eng", line), CONV.feed(line))
         known_flags = engine_flags_of(cfg["engine_bin"])
         has_grammar = known_flags is not None and "--grammar" in known_flags
         if a.grammar and not has_grammar:

@@ -127,6 +127,10 @@ function draw() {
   text("#s-load", num(g0.util) ? `${Math.round(g0.util)}%` : "—");
   text("#s-vram", num(g0.mem_used) ? `${gib(g0.mem_used)} / ${gib(g0.mem_total)} GiB` : "—");
   text("#s-temp", num(g0.temp) ? `${Math.round(g0.temp)} °C` : "—");
+  // local patch: the CPU temperature (red from 95 C) and the conversation cache
+  text("#s-ctemp", num(hw.cpu_temp) ? `${Math.round(hw.cpu_temp)} °C` : "—");
+  $("#s-ctemp").style.color = num(hw.cpu_temp) && hw.cpu_temp >= 95 ? "var(--err)" : "";
+  drawConv(M.conversation_cache || {}, eng);
   text("#s-pow", num(g0.power) ? `${Math.round(g0.power)}${num(g0.power_limit) ? ` / ${Math.round(g0.power_limit)}` : ""} W` : "—");
   text("#s-cpu", num(hw.cpu) ? `${Math.round(hw.cpu)}%` : "—");
   text("#s-ram", num(hw.ram_total) ? `${gib(hw.ram_used)} / ${gib(hw.ram_total)} GiB` : "—");
@@ -145,8 +149,10 @@ function draw() {
 
 function drawRequests(live, reqs, busy, multi) {
   const rows = [];
-  if (busy && !multi) rows.push({ t: Date.now() / 1000 - (live.elapsed_s || 0), id: "Running", path: "—", out: live.generated, tps: live.tok_s, dur: live.elapsed_s, live: true });
-  reqs.forEach(r => rows.push({ t: r.time, id: r.id, path: (r.path || "").replace("/v1/", "").replace("chat/completions", "chat"), out: r.output_tokens, tps: r.decode_tok_s, dur: r.duration_s, finish: r.finish }));
+  if (busy && !multi) rows.push({ t: Date.now() / 1000 - (live.elapsed_s || 0), id: "Running", path: "—", inp: live.prompt_tokens, out: live.generated, tps: live.tok_s, dur: live.elapsed_s, live: true });
+  // local patch: input, reused and prefill speed (tokens read / prompt time) per request
+  const pf = r => r.prompt_ms > 0 && r.prompt_tokens > (r.reused || 0) ? (r.prompt_tokens - (r.reused || 0)) / (r.prompt_ms / 1000) : null;
+  reqs.forEach(r => rows.push({ t: r.time, id: r.id, path: (r.path || "").replace("/v1/", "").replace("chat/completions", "chat"), inp: r.prompt_tokens, reused: r.reused, pf: pf(r), out: r.output_tokens, tps: r.decode_tok_s, dur: r.duration_s, finish: r.finish }));
   const total = rows.length; rows.length = Math.min(rows.length, 6);   // with slots, the lanes show what is running
   const tb = $("#t-req"); tb.replaceChildren();
   rows.forEach(r => {
@@ -154,7 +160,9 @@ function drawRequests(live, reqs, busy, multi) {
     // a request that did not simply stop is marked on its id, with the engine's reason as the tooltip
     const odd = r.finish && r.finish !== "stop" ? (r.finish === "error" ? "err" : "warn") : "";
     const id = `${r.id || "—"}${odd ? ` · ${r.finish}` : ""}`;
-    [[clock(r.t * 1000).slice(0, 8), ""], [id, "f " + odd], [r.path || "—", ""], [num(r.out) ? fmt(r.out) : "—", "n"],
+    [[clock(r.t * 1000).slice(0, 8), ""], [id, "f " + odd], [r.path || "—", ""],
+     [num(r.inp) ? fmt(r.inp) : "—", "n"], [num(r.reused) ? fmt(r.reused) : "—", "n"], [num(r.pf) ? fmt(r.pf) : "—", "n"],
+     [num(r.out) ? fmt(r.out) : "—", "n"],
      [num(r.tps) ? r.tps.toFixed(1) : "—", r.live ? "n f live" : "n f"], [num(r.dur) ? `${r.dur.toFixed(1)} s` : "—", "n"]].forEach(([t, c]) => {
       const td = document.createElement("td"); td.textContent = t; if (c) td.className = c.trim(); tr.append(td);
     });
@@ -162,6 +170,19 @@ function drawRequests(live, reqs, busy, multi) {
   });
   $("#req-empty").hidden = rows.length > 0;
   PANE.req = String(total); text("#req-count", PANE.req); if (curPane() === "req") text("#pane-count", PANE.req);
+}
+
+// local patch: the conversation cache, from the engine's log lines (/metrics "conversation_cache")
+function drawConv(c, eng) {
+  const budget = eng.conversation_cache_mib, mib = num(c.bytes) ? c.bytes / 2 ** 20 : null;
+  text("#cv-n", num(c.parked) ? `${c.parked}${num(eng.conversation_cache_slots) ? ` of ${eng.conversation_cache_slots}` : ""}` : "0");
+  text("#cv-mib", num(mib) ? `${fmt(mib)}${num(budget) ? ` / ${fmt(budget)}` : ""} MiB` : "—");
+  text("#cv-ev", fmt(c.evictions || 0));
+  text("#cv-res", fmt(c.restores || 0));
+  text("#cv-parks", fmt(c.parks || 0));
+  text("#cv-skip", fmt(c.skips || 0));
+  $("#cv-bar").style.width = num(mib) && num(budget) && budget > 0 ? `${Math.min(100, mib / budget * 100).toFixed(1)}%` : "0";
+  $("#cv-note").title = c.last || "";
 }
 
 function drawHardware(eng, st, hw, gpus, names, sh) {
@@ -194,6 +215,10 @@ function drawHardware(eng, st, hw, gpus, names, sh) {
   text("#h-cpu", st.cpu_name || "—");
   text("#h-cores", st.cores && st.threads ? `${st.cores} cores · ${st.threads} threads` : num(st.threads) ? `${st.threads} threads` : "—");
   text("#h-load", num(hw.cpu) ? `${Math.round(hw.cpu)}%` : "—");
+  // local patch: CPU, RAM modules and SSD
+  text("#h-temps", [num(hw.cpu_temp) ? `CPU ${Math.round(hw.cpu_temp)} °C` : "",
+    (hw.ram_temps || []).length ? `RAM ${hw.ram_temps.map(t => Math.round(t)).join(" / ")} °C` : "",
+    num(hw.ssd_temp) ? `SSD ${Math.round(hw.ssd_temp)} °C` : ""].filter(Boolean).join(" · ") || "—");
   text("#h-driver", st.driver ? `${st.driver}${st.cuda ? ` · CUDA ${st.cuda}` : ""}` : "—");
   text("#h-model", eng.model || "—");
   text("#h-ctx", num(eng.max_context) ? `${fmt(eng.max_context)} tokens${eng.kv ? ` · kv ${eng.kv}` : ""}` : "—");

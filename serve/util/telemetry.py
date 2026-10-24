@@ -168,6 +168,51 @@ GPU_KEYS = ("util", "mem_used", "mem_total", "temp", "power", "power_limit", "pc
 SERIES = ("tok_s", "prefill_tok_s_mean")      # series kept as history
 
 
+class ConvCacheStats:
+    """The conversation cache's figures from the engine's log lines (local patch, 2026-10-24): the engine writes
+    "conversation cache: parked|skipped N tokens ...; parked=K bytes=B evictions=E ...", "restored N tokens ...;
+    parked=K bytes=B", "skip parking (...)" and "dropped ...; parked=K". Nothing else reports them."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.s = {"parked": None, "bytes": None, "evictions": None, "parks": 0, "restores": 0, "skips": 0,
+                  "last": None, "last_t": None}
+
+    def feed(self, text):
+        for line in (text or "").splitlines():
+            i = line.find("conversation cache: ")
+            if i < 0:
+                continue
+            msg = line[i + len("conversation cache: "):].strip()
+            kv = {}
+            for part in msg.replace(";", " ").split():
+                k, eq, v = part.partition("=")
+                if eq and v.isdigit():
+                    kv[k] = int(v)
+            with self.lock:
+                for k in ("parked", "bytes", "evictions"):
+                    if k in kv:
+                        self.s[k] = kv[k]
+                if msg.startswith("parked "):
+                    self.s["parks"] += 1
+                elif msg.startswith("restored "):
+                    self.s["restores"] += 1
+                elif msg.startswith(("skip", "skipped ")):
+                    self.s["skips"] += 1
+                self.s["last"], self.s["last_t"] = msg[:160], round(time.time(), 1)
+
+    def add(self, src, text):
+        """The LogBuffer interface, so serve/util/logbuf.py's tail_file can feed it from the engine's log file."""
+        self.feed(text)
+
+    def snapshot(self):
+        with self.lock:
+            return dict(self.s)
+
+
+CONV = ConvCacheStats()
+
+
 class Telemetry:
     def __init__(self, extra=None, gpu_indices=None, gpu_factory=gpu_reader):
         """`extra()` returns the server's own speeds, recorded each second. `gpu_indices`: the engine's cards
@@ -210,6 +255,25 @@ class Telemetry:
             return None
         return (c.read_bytes - prev[1]) / (t - prev[0]) / 2**20
 
+    def _temps(self):
+        """CPU package, RAM module and SSD temperatures in C through psutil (the hwmon files, no root): Intel coretemp
+        "Package id N" (AMD k10temp "Tctl"), each DDR5 module's spd5118 sensor, each NVMe drive's "Composite".
+        Local patch, 2026-10-24 (as the Strata Monitor patch of 2026-10-21); a missing sensor gives None."""
+        out = {"cpu_temp": None, "ram_temps": [], "ram_temp": None, "ssd_temp": None}
+        if not self.ps or not hasattr(self.ps, "sensors_temperatures"):
+            return out
+        try:
+            t = self.ps.sensors_temperatures()
+        except (OSError, RuntimeError, AttributeError):
+            return out
+        cpu = [x.current for x in t.get("coretemp", []) if (x.label or "").startswith("Package")]
+        cpu = cpu or [x.current for x in t.get("k10temp", []) if x.label in ("Tctl", "Tdie")]
+        ram = [x.current for x in t.get("spd5118", []) if x.current]
+        ssd = [x.current for x in t.get("nvme", []) if x.label == "Composite"]
+        out.update(cpu_temp=max(cpu) if cpu else None, ram_temps=ram, ram_temp=max(ram) if ram else None,
+                   ssd_temp=max(ssd) if ssd else None)
+        return out
+
     def sample(self):
         s = {"gpus": []}
         for i, g in self.gpus:
@@ -230,6 +294,7 @@ class Telemetry:
             s["cpu"] = self.fallback.cpu()
             s["ram_used"], s["ram_total"] = self.fallback.ram()
         s["disk_read_mb"] = self._disk()
+        s.update(self._temps())                         # local patch: CPU, RAM and SSD temperatures
         if self.extra:
             try:
                 s.update(self.extra())

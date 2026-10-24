@@ -46,6 +46,7 @@
   <span>GPU load <b id="s-load">—</b></span>
   <span>VRAM <b id="s-vram">—</b></span>
   <span>GPU temp <b id="s-temp">—</b></span>
+  <span>CPU temp <b id="s-ctemp">—</b></span>
   <span>Power <b id="s-pow">—</b></span>
   <span>CPU <b id="s-cpu">—</b></span>
   <span>RAM <b id="s-ram">—</b></span>
@@ -92,6 +93,22 @@
         </div>
       </section>
 
+      <section class="sec" id="conv">
+        <div class="sh"><b>Conversations</b><span class="grow"></span><span id="cv-note">Parked in RAM</span></div>
+        <div class="pad">
+          <div class="meter" aria-hidden="true"><i id="cv-bar" style="width:0"></i></div>
+          <div class="leg">
+            <span style="--c:var(--fg)">Parked <b id="cv-n">—</b></span>
+            <span style="--c:var(--fg-3)">RAM <b id="cv-mib">—</b></span>
+            <span style="--c:var(--basalt-500)">Evicted <b id="cv-ev">—</b></span>
+          </div>
+          <div class="leg">
+            <span style="--c:var(--fg)">Restored <b id="cv-res">—</b></span>
+            <span style="--c:var(--fg-3)">Parks <b id="cv-parks">—</b></span>
+            <span style="--c:var(--basalt-500)">Skipped <b id="cv-skip">—</b></span>
+          </div>
+        </div>
+      </section>
       <section class="sec qsec" id="queue" hidden>
         <div class="sh"><b>Queue</b><span id="q-count">0</span><span class="grow"></span><span>Waiting for a free slot</span></div>
         <div class="tw">
@@ -120,7 +137,7 @@
           <div class="sh phead"><b>Requests</b><span class="cnt" id="req-count">0</span></div>
           <div class="tw">
             <table>
-              <thead><tr><th>Time</th><th>ID</th><th>Endpoint</th><th class="n">Output</th><th class="n">Tokens/s</th><th class="n">Duration</th></tr></thead>
+              <thead><tr><th>Time</th><th>ID</th><th>Endpoint</th><th class="n">Input</th><th class="n">Reused</th><th class="n">Prefill t/s</th><th class="n">Output</th><th class="n">Tokens/s</th><th class="n">Duration</th></tr></thead>
               <tbody id="t-req"></tbody>
             </table>
             <div class="empty" id="req-empty">No requests yet.</div>
@@ -158,6 +175,7 @@
           <dt>CPU</dt><dd id="h-cpu">—</dd>
           <dt>Cores</dt><dd id="h-cores">—</dd>
           <dt>CPU load</dt><dd id="h-load">—</dd>
+          <dt>Temperatures</dt><dd id="h-temps">—</dd>
           <dt>GPU driver</dt><dd id="h-driver">—</dd>
         </dl>
       </section>

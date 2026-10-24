@@ -413,8 +413,10 @@ class Service:
                   **dict(getattr(self.engine, "info", {}) or {})}
         tel = self.telemetry.snapshot() if getattr(self, "telemetry", None) else \
             {"now": {"gpus": []}, "history": {}, "static": {"gpus": []}}
+        from serve.util.telemetry import CONV           # local patch: the conversation cache's figures
         return {"engine": engine, "live": live, "requests": hist[::-1][:REQUESTS_SHOWN],
-                "hardware": tel["now"], "hardware_static": tel["static"], "history": tel["history"]}
+                "hardware": tel["now"], "hardware_static": tel["static"], "history": tel["history"],
+                "conversation_cache": CONV.snapshot()}
 
     def v1_status(self) -> dict:
         """GET /v1/status: model, context, APIs, activity and last timings, for clients that poll status."""
